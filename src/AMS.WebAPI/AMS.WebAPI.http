@@ -1,0 +1,6 @@
+@AMS.WebAPI_HostAddress = http://localhost:5290
+
+GET {{AMS.WebAPI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

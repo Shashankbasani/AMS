@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AMS.Core/AMS.Core.csproj" />
+    <Project Path="src/AMS.Functions/AMS.Functions.csproj" />
+    <Project Path="src/AMS.Infrastructure/AMS.Infrastructure.csproj" />
+    <Project Path="src/AMS.WebAPI/AMS.WebAPI.csproj" />
+  </Folder>
+</Solution>

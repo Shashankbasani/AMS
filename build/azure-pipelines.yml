@@ -1,0 +1,232 @@
+# Azure DevOps CI/CD Pipeline for Agency Management System
+# This pipeline builds, tests, and deploys the AMS application
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - release/*
+  paths:
+    exclude:
+      - README.md
+      - docs/*
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  solution: '**/*.sln'
+  buildPlatform: 'Any CPU'
+  buildConfiguration: 'Release'
+  azureSubscription: 'AMS-Azure-Subscription'
+  webAppName: 'ams-webapi'
+  resourceGroupName: 'ams-resource-group'
+
+stages:
+  # ============================================
+  # Build Stage
+  # ============================================
+  - stage: Build
+    displayName: 'Build & Test'
+    jobs:
+      - job: BuildJob
+        displayName: 'Build Solution'
+        steps:
+          - task: NuGetToolInstaller@1
+            displayName: 'Install NuGet'
+
+          - task: NuGetCommand@2
+            displayName: 'Restore NuGet Packages'
+            inputs:
+              restoreSolution: '$(solution)'
+
+          - task: VSBuild@1
+            displayName: 'Build Solution'
+            inputs:
+              solution: '$(solution)'
+              msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:PackageLocation="$(build.artifactStagingDirectory)"'
+              platform: '$(buildPlatform)'
+              configuration: '$(buildConfiguration)'
+
+          - task: VSTest@2
+            displayName: 'Run Unit Tests'
+            inputs:
+              platform: '$(buildPlatform)'
+              configuration: '$(buildConfiguration)'
+              testSelector: 'testAssemblies'
+              testAssemblyVer2: |
+                **\*Tests*.dll
+                !**\*TestAdapter.dll
+                !**\obj\**
+              searchFolder: '$(System.DefaultWorkingDirectory)'
+              codeCoverageEnabled: true
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Artifacts'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+  # ============================================
+  # Deploy to Development
+  # ============================================
+  - stage: DeployDev
+    displayName: 'Deploy to Development'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+    variables:
+      environmentName: 'Development'
+      slotName: 'dev'
+    jobs:
+      - deployment: DeployWebAPI
+        displayName: 'Deploy Web API'
+        environment: 'AMS-Development'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: DownloadBuildArtifacts@1
+                  inputs:
+                    buildType: 'current'
+                    downloadType: 'single'
+                    artifactName: 'drop'
+                    downloadPath: '$(System.ArtifactsDirectory)'
+
+                - task: AzureRmWebAppDeployment@4
+                  displayName: 'Deploy to Azure App Service'
+                  inputs:
+                    ConnectionType: 'AzureRM'
+                    azureSubscription: '$(azureSubscription)'
+                    appType: 'webApp'
+                    WebAppName: '$(webAppName)'
+                    deployToSlotOrASE: true
+                    ResourceGroupName: '$(resourceGroupName)'
+                    SlotName: '$(slotName)'
+                    packageForLinux: '$(System.ArtifactsDirectory)/drop/*.zip'
+                    enableCustomDeployment: true
+                    DeploymentType: 'webDeploy'
+
+  # ============================================
+  # Deploy to Staging
+  # ============================================
+  - stage: DeployStaging
+    displayName: 'Deploy to Staging'
+    dependsOn: Build
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+    variables:
+      environmentName: 'Staging'
+      slotName: 'staging'
+    jobs:
+      - deployment: DeployWebAPI
+        displayName: 'Deploy Web API'
+        environment: 'AMS-Staging'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: DownloadBuildArtifacts@1
+                  inputs:
+                    buildType: 'current'
+                    downloadType: 'single'
+                    artifactName: 'drop'
+                    downloadPath: '$(System.ArtifactsDirectory)'
+
+                - task: AzureRmWebAppDeployment@4
+                  displayName: 'Deploy to Staging Slot'
+                  inputs:
+                    ConnectionType: 'AzureRM'
+                    azureSubscription: '$(azureSubscription)'
+                    appType: 'webApp'
+                    WebAppName: '$(webAppName)'
+                    deployToSlotOrASE: true
+                    ResourceGroupName: '$(resourceGroupName)'
+                    SlotName: '$(slotName)'
+                    packageForLinux: '$(System.ArtifactsDirectory)/drop/*.zip'
+
+  # ============================================
+  # Deploy to Production
+  # ============================================
+  - stage: DeployProduction
+    displayName: 'Deploy to Production'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    variables:
+      environmentName: 'Production'
+    jobs:
+      - deployment: DeployWebAPI
+        displayName: 'Deploy Web API'
+        environment: 'AMS-Production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: DownloadBuildArtifacts@1
+                  inputs:
+                    buildType: 'current'
+                    downloadType: 'single'
+                    artifactName: 'drop'
+                    downloadPath: '$(System.ArtifactsDirectory)'
+
+                # Deploy to staging slot first
+                - task: AzureRmWebAppDeployment@4
+                  displayName: 'Deploy to Staging Slot'
+                  inputs:
+                    ConnectionType: 'AzureRM'
+                    azureSubscription: '$(azureSubscription)'
+                    appType: 'webApp'
+                    WebAppName: '$(webAppName)'
+                    deployToSlotOrASE: true
+                    ResourceGroupName: '$(resourceGroupName)'
+                    SlotName: 'staging'
+                    packageForLinux: '$(System.ArtifactsDirectory)/drop/*.zip'
+
+                # Run smoke tests on staging
+                - task: PowerShell@2
+                  displayName: 'Run Smoke Tests'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      $response = Invoke-WebRequest -Uri "https://$(webAppName)-staging.azurewebsites.net/api/health" -UseBasicParsing
+                      if ($response.StatusCode -ne 200) {
+                        throw "Health check failed"
+                      }
+                      Write-Host "Health check passed!"
+
+                # Swap slots for zero-downtime deployment
+                - task: AzureAppServiceManage@0
+                  displayName: 'Swap Staging to Production'
+                  inputs:
+                    azureSubscription: '$(azureSubscription)'
+                    Action: 'Swap Slots'
+                    WebAppName: '$(webAppName)'
+                    ResourceGroupName: '$(resourceGroupName)'
+                    SourceSlot: 'staging'
+                    SwapWithProduction: true
+
+  # ============================================
+  # Database Migration Stage
+  # ============================================
+  - stage: DatabaseMigration
+    displayName: 'Database Migration'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: RunMigrations
+        displayName: 'Run Database Migrations'
+        steps:
+          - task: SqlAzureDacpacDeployment@1
+            displayName: 'Deploy SQL Scripts'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              AuthenticationType: 'connectionString'
+              ConnectionString: '$(SqlConnectionString)'
+              deployType: 'SqlTask'
+              SqlFile: 'database/schema/*.sql'

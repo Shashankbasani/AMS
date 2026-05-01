@@ -1,0 +1,101 @@
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio files
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# NuGet packages
+packages/
+*.nupkg
+**/[Pp]ackages/*
+
+# Windows image file caches
+Thumbs.db
+ehthumbs.db
+
+# Folder config file
+Desktop.ini
+
+# Mac files
+.DS_Store
+
+# Node modules (if React frontend)
+node_modules/
+npm-debug.log*
+
+# Azure Functions local settings (contains secrets!)
+local.settings.json
+
+# Application settings with secrets
+appsettings.Development.json
+appsettings.*.json
+!appsettings.json
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results of an ideproject
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+msbuild.log
+msbuild.err
+msbuild.wrn
+
+# Visual Studio
+.vs/
+*.csproj.user
+*.manifest
+*.cache
+
+# Test Results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+TestResult.xml
+nunit-*.xml
+
+# Publish profiles
+*.pubxml
+*.publishproj
+
+# Azure
+publish/
+*.azurePubxml
+
+# IDE settings
+.idea/
+.vscode/settings.json
+
+# Sensitive files
+*.pfx
+*.key
+*.pem
+secrets.json
