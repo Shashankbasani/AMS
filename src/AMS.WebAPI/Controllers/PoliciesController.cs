@@ -6,11 +6,22 @@ using AMS.Core.Entities;
 using AMS.Core.Interfaces;
 using AMS.Core.Enums;
 using AMS.Infrastructure.Data;
+using AMS.Infrastructure.Services;
 
 namespace AMS.WebAPI.Controllers;
 
 /// <summary>
 /// Policies Controller - Manages insurance policies
+/// 
+/// THIS CONTROLLER NOW USES PolicyNumberService to generate policy numbers!
+/// 
+/// BEFORE (without service):
+/// var policyNumber = $"POL-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..4].ToUpper()}";
+/// ^ This creates random policy numbers, not sequential
+/// 
+/// AFTER (with service):
+/// var policyNumber = await _policyNumberService.GenerateAsync(dto.Type);
+/// ^ This creates sequential policy numbers: AUT2024000001, AUT2024000002, etc.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
@@ -19,15 +30,18 @@ public class PoliciesController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly AMSDbContext _context;
+    private readonly IPolicyNumberService _policyNumberService;  // NEW!
     private readonly ILogger<PoliciesController> _logger;
     
     public PoliciesController(
         IUnitOfWork unitOfWork,
         AMSDbContext context,
+        IPolicyNumberService policyNumberService,  // NEW! Injected from DI container
         ILogger<PoliciesController> logger)
     {
         _unitOfWork = unitOfWork;
         _context = context;
+        _policyNumberService = policyNumberService;  // NEW!
         _logger = logger;
     }
     
@@ -103,53 +117,67 @@ public class PoliciesController : ControllerBase
     /// <summary>
     /// POST /api/policies
     /// Creates a new policy
+    /// 
+    /// NOW USES PolicyNumberService TO GENERATE SEQUENTIAL POLICY NUMBERS!
     /// </summary>
     [HttpPost]
     public async Task<ActionResult<PolicyDto>> CreatePolicy([FromBody] CreatePolicyDto dto)
     {
-        // Verify client exists
-        var client = await _unitOfWork.Clients.GetByIdAsync(dto.ClientId);
-        if (client == null)
+        try
         {
-            return BadRequest(new { message = "Client not found" });
+            // Verify client exists
+            var client = await _unitOfWork.Clients.GetByIdAsync(dto.ClientId);
+            if (client == null)
+            {
+                return BadRequest(new { message = "Client not found" });
+            }
+            
+            // ===== NEW: USE POLICY NUMBER SERVICE TO GENERATE SEQUENTIAL NUMBER =====
+            // This replaces the old random method:
+            // OLD: var policyNumber = $"POL-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..4].ToUpper()}";
+            var policyNumber = await _policyNumberService.GenerateAsync(dto.Type);
+            // ===== END NEW CODE =====
+            
+            var policy = new Policy
+            {
+                PolicyNumber = policyNumber,
+                ClientId = dto.ClientId,
+                Type = dto.Type,
+                Status = PolicyStatus.Active,
+                PremiumAmount = dto.PremiumAmount,
+                CoverageAmount = dto.CoverageAmount,
+                StartDate = dto.StartDate,
+                EndDate = dto.EndDate,
+                Description = dto.Description
+            };
+            
+            await _unitOfWork.Policies.AddAsync(policy);
+            await _unitOfWork.SaveChangesAsync();
+            
+            _logger.LogInformation("Created policy {PolicyNumber} for client {ClientId} using PolicyNumberService", 
+                policyNumber, dto.ClientId);
+            
+            return CreatedAtAction(nameof(GetPolicy), new { id = policy.Id }, new PolicyDto
+            {
+                Id = policy.Id,
+                PolicyNumber = policy.PolicyNumber,
+                ClientId = policy.ClientId,
+                ClientName = client.FirstName + " " + client.LastName,
+                Type = policy.Type,
+                Status = policy.Status,
+                PremiumAmount = policy.PremiumAmount,
+                CoverageAmount = policy.CoverageAmount,
+                StartDate = policy.StartDate,
+                EndDate = policy.EndDate,
+                Description = policy.Description,
+                CreatedAt = policy.CreatedAt
+            });
         }
-        
-        // Generate policy number
-        var policyNumber = $"POL-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..4].ToUpper()}";
-        
-        var policy = new Policy
+        catch (Exception ex)
         {
-            PolicyNumber = policyNumber,
-            ClientId = dto.ClientId,
-            Type = dto.Type,
-            Status = PolicyStatus.Active,
-            PremiumAmount = dto.PremiumAmount,
-            CoverageAmount = dto.CoverageAmount,
-            StartDate = dto.StartDate,
-            EndDate = dto.EndDate,
-            Description = dto.Description
-        };
-        
-        await _unitOfWork.Policies.AddAsync(policy);
-        await _unitOfWork.SaveChangesAsync();
-        
-        _logger.LogInformation("Created policy {PolicyNumber} for client {ClientId}", policyNumber, dto.ClientId);
-        
-        return CreatedAtAction(nameof(GetPolicy), new { id = policy.Id }, new PolicyDto
-        {
-            Id = policy.Id,
-            PolicyNumber = policy.PolicyNumber,
-            ClientId = policy.ClientId,
-            ClientName = client.FullName,
-            Type = policy.Type,
-            Status = policy.Status,
-            PremiumAmount = policy.PremiumAmount,
-            CoverageAmount = policy.CoverageAmount,
-            StartDate = policy.StartDate,
-            EndDate = policy.EndDate,
-            Description = policy.Description,
-            CreatedAt = policy.CreatedAt
-        });
+            _logger.LogError(ex, "Error creating policy for client {ClientId}", dto.ClientId);
+            return StatusCode(500, new { message = "Error creating policy", error = ex.Message });
+        }
     }
     
     /// <summary>
